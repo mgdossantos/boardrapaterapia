@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Atos do Espetáculo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Kalam:wght@400;700&display=swap">
+<style>
+/* Layout: barra fixa no topo + quadro livre onde os post-its se movem */
+:root{
+  --board:#e9e4dc; --dot:#cfc6b8; --ink:#b3123c; --bar:#2a2326; --barfg:#f6eef0;
+  --pink:#ff4fa3; --orange:#ffa36b; --yellow:#ffe06b; --green:#9be39b;
+  --display:"Permanent Marker", "Comic Sans MS", cursive;
+  --hand:"Kalam", "Comic Sans MS", cursive;
+  color-scheme: light;
+}
+html,body{height:100%}
+*{box-sizing:border-box}
+body{margin:0;background:var(--board);color:var(--ink);font-family:var(--hand);overflow:hidden}
+.bar{position:fixed;inset:0 0 auto;z-index:1000;background:var(--bar);color:var(--barfg);
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  padding-block:calc(8px + env(safe-area-inset-top,0px)) 8px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.bar h1{font-family:var(--display);font-weight:400;font-size:18px;margin:0 auto 0 0;letter-spacing:.02em}
+.bar button{font:inherit;font-size:14px;border:0;border-radius:6px;padding:6px 10px;cursor:pointer;background:#463c40;color:var(--barfg)}
+.bar button:hover{background:#5a4e53}
+.bar button:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
+.swatch{width:22px;height:22px;padding:0!important;border:2px solid transparent!important}
+.swatch[aria-pressed="true"]{border-color:#fff!important}
+#board{position:absolute;inset:0;overflow:auto;padding-top:56px;
+  background-image:radial-gradient(var(--dot) 1px,transparent 1px);background-size:22px 22px}
+#canvas{position:relative;width:2400px;height:1600px}
+.note{position:absolute;width:220px;min-height:170px;padding:10px 12px 14px;
+  box-shadow:0 2px 3px rgba(0,0,0,.15),0 8px 18px rgba(0,0,0,.12);
+  display:flex;flex-direction:column;gap:4px;touch-action:none}
+.note.dragging{box-shadow:0 6px 10px rgba(0,0,0,.2),0 18px 30px rgba(0,0,0,.18);transform:rotate(-1.5deg)}
+.grip{display:flex;justify-content:space-between;align-items:center;cursor:grab;user-select:none;
+  font-family:var(--display);font-size:24px;line-height:1.1}
+.grip:active{cursor:grabbing}
+.title{outline:none;min-width:40px;cursor:text}
+.del{border:0;background:transparent;color:var(--ink);opacity:.45;font-size:18px;cursor:pointer;padding:0 2px}
+.del:hover{opacity:1}
+.body{outline:none;font-size:18px;line-height:1.3;white-space:pre-wrap;flex:1;cursor:text;color:#7a0d2b}
+.title:focus,.body:focus{background:rgba(255,255,255,.25)}
+.empty{position:absolute;left:16px;top:16px;font-size:18px;color:#6d6360}
+.hint{position:fixed;bottom:calc(10px + env(safe-area-inset-bottom,0px));right:max(16px,env(safe-area-inset-right,0px));
+  font-size:13px;color:#6d6360;background:rgba(255,255,255,.7);padding:4px 8px;border-radius:6px;z-index:999}
+@media (prefers-reduced-motion:reduce){.note.dragging{transform:none}}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>Atos do Espetáculo</h1>
+  <button class="swatch" data-c="pink" style="background:var(--pink)" aria-label="Rosa" aria-pressed="true"></button>
+  <button class="swatch" data-c="orange" style="background:var(--orange)" aria-label="Laranja" aria-pressed="false"></button>
+  <button class="swatch" data-c="yellow" style="background:var(--yellow)" aria-label="Amarelo" aria-pressed="false"></button>
+  <button class="swatch" data-c="green" style="background:var(--green)" aria-label="Verde" aria-pressed="false"></button>
+  <button id="add">+ Novo post-it</button>
+  <button id="order">Organizar por ato</button>
+  <button id="reset">Restaurar original</button>
+  <button id="exp">Baixar quadro</button>
+  <button id="imp">Carregar quadro</button>
+  <input type="file" id="file" accept=".json,application/json" hidden>
+</div>
+<div id="board"><div id="canvas"></div></div>
+<div class="hint" id="hint">Carregando o quadro…</div>
+
+<script>
+const ORIGINAL=[
+ {t:'ATO 1',b:'TODAS\n(em círculo)\n\nSaia palha (tribal)\nAlgumas com lenço',c:'pink'},
+ {t:'ATO 2',b:'PALCO\n→ as com lenço\n\nDUPLAS\nDUPLAS',c:'pink'},
+ {t:'ATO 3',b:'BAR\nMURO\nPALCO',c:'pink'},
+ {t:'ATO 4',b:'DUPLAS\nMALANDRO\nPASSISTA\n\nTira saia as que forem dançar Feitiço e viram malandros (chapéu, camisa) e passista (franja)',c:'pink'},
+ {t:'ATO 5',b:'TRIBAL\nsaia tribal\n\nSAMBA\nsamba, passista, malandro',c:'pink'},
+ {t:'ATO 6',b:'SAL GROSSO\nsaia tribal\n(não são todas)',c:'pink'},
+ {t:'ATO 7',b:'FUNK\n\nTODAS',c:'orange'}
+];
+const LKEY='atos-postits-v1';
+const canvas=document.getElementById('canvas'), board=document.getElementById('board'), hint=document.getElementById('hint');
+const notes=new Map(), els=new Map();
+let color='pink', z=10, col=null, readOnly=false, mode='loading';
+let dragging=null; const timers={};
+
+function setHint(t){hint.textContent=t;}
+function refreshHint(){}
+function gridPos(i){
+  const w=Math.max(board.clientWidth,260), cols=Math.max(1,Math.floor((w-16)/240));
+  return {x:16+(i%cols)*240,y:16+Math.floor(i/cols)*260};
+}
+function originals(){return ORIGINAL.map((n,i)=>({id:'n'+i,...n,...gridPos(i)}));}
+
+/* ---------- gravação ---------- */
+function saveLocal(){try{localStorage.setItem(LKEY,JSON.stringify([...notes.values()]));}catch(e){}}
+async function write(n){
+  if(mode==='local'){saveLocal();return;}
+  if(!col||readOnly)return;
+  const {id,...body}=n;
+  try{await col.doc(id).set(body);}
+  catch(e){if(e&&e.code==='invalid_argument'){readOnly=true;applyReadOnly();}
+           else if(e&&e.code==='quota_exceeded'){setHint('O quadro está cheio. Apague alguns post-its.');}}
+}
+function writeSoon(n){clearTimeout(timers[n.id]);timers[n.id]=setTimeout(()=>write(n),600);}
+async function remove(id){
+  notes.delete(id);els.get(id)?.remove();els.delete(id);
+  if(mode==='local')saveLocal(); else if(col&&!readOnly){try{await col.doc(id).delete();}catch(e){}}
+  showEmpty();
+}
+
+/* ---------- desenho ---------- */
+function make(n){
+  const el=document.createElement('div');
+  el.className='note';el.style.zIndex=++z;
+  el.innerHTML=`<div class="grip"><span class="title" contenteditable="true" spellcheck="false"></span><button class="del" aria-label="Apagar post-it">✕</button></div><div class="body" contenteditable="true" spellcheck="false"></div>`;
+  const t=el.querySelector('.title'),b=el.querySelector('.body');
+  t.addEventListener('input',()=>{const m=notes.get(n.id);if(m){m.t=t.innerText;writeSoon(m);}});
+  b.addEventListener('input',()=>{const m=notes.get(n.id);if(m){m.b=b.innerText;writeSoon(m);}});
+  el.querySelector('.del').addEventListener('click',e=>{
+    const btn=e.currentTarget;
+    if(btn.dataset.armed)remove(n.id);
+    else{btn.dataset.armed='1';btn.textContent='apagar?';setTimeout(()=>{delete btn.dataset.armed;btn.textContent='✕';},2500);}
+  });
+  el.querySelector('.grip').addEventListener('pointerdown',e=>{
+    if(readOnly||e.target.closest('.title,.del'))return;
+    startDrag(e,el,n.id);
+  });
+  el.addEventListener('pointerdown',()=>{el.style.zIndex=++z;});
+  canvas.appendChild(el);els.set(n.id,el);
+  return el;
+}
+function paint(n){
+  const el=els.get(n.id)||make(n);
+  if(dragging!==n.id){el.style.left=(n.x||0)+'px';el.style.top=(n.y||0)+'px';}
+  el.style.background=`var(--${n.c||'pink'})`;
+  const t=el.querySelector('.title'),b=el.querySelector('.body');
+  if(document.activeElement!==t&&t.innerText!==n.t)t.textContent=n.t||'';
+  if(document.activeElement!==b&&b.innerText!==n.b)b.textContent=n.b||'';
+  if(readOnly){t.contentEditable='false';b.contentEditable='false';}
+}
+function showEmpty(){
+  let e=canvas.querySelector('.empty');
+  if(notes.size===0&&mode!=='loading'){
+    if(!e){e=document.createElement('div');e.className='empty';canvas.appendChild(e);}
+    e.textContent='Nenhum post-it ainda. Clique em "+ Novo post-it" ou em "Restaurar original".';
+  }else if(e)e.remove();
+}
+function applyReadOnly(){
+  ['add','order','reset'].forEach(id=>document.getElementById(id).disabled=true);
+  document.querySelectorAll('.del').forEach(d=>d.hidden=true);
+  els.forEach((el,id)=>paint(notes.get(id)));
+  setHint('Você pode ver o quadro, mas não editar.');
+}
+
+function startDrag(e,el,id){
+  e.preventDefault();
+  const n=notes.get(id);if(!n)return;
+  const sx=e.clientX,sy=e.clientY,ox=n.x,oy=n.y;
+  dragging=id;el.classList.add('dragging');el.setPointerCapture(e.pointerId);
+  const move=ev=>{n.x=Math.max(0,ox+ev.clientX-sx);n.y=Math.max(0,oy+ev.clientY-sy);el.style.left=n.x+'px';el.style.top=n.y+'px';};
+  const up=()=>{dragging=null;el.classList.remove('dragging');el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',up);el.removeEventListener('pointercancel',up);if(n.x!==ox||n.y!==oy)write(n);};
+  el.addEventListener('pointermove',move);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
+}
+
+/* ---------- barra ---------- */
+document.querySelectorAll('.swatch').forEach(s=>s.addEventListener('click',()=>{
+  color=s.dataset.c;document.querySelectorAll('.swatch').forEach(x=>x.setAttribute('aria-pressed',x===s));
+}));
+document.getElementById('add').addEventListener('click',()=>{
+  const n={id:'n'+Date.now().toString(36),t:'ATO '+(notes.size+1),b:'',c:color,x:board.scrollLeft+40,y:board.scrollTop+40};
+  notes.set(n.id,n);paint(n);showEmpty();write(n);els.get(n.id).querySelector('.body').focus();
+});
+document.getElementById('order').addEventListener('click',async()=>{
+  const num=s=>{const m=String(s.t).match(/\d+/);return m?+m[0]:999;};
+  const list=[...notes.values()].sort((a,b)=>num(a)-num(b));
+  list.forEach((n,i)=>{Object.assign(n,gridPos(i));paint(n);});
+  for(const n of list)await write(n);
+});
+const resetBtn=document.getElementById('reset');
+resetBtn.addEventListener('click',async()=>{
+  if(!resetBtn.dataset.armed){resetBtn.dataset.armed='1';resetBtn.textContent='Clique de novo p/ confirmar';
+    setTimeout(()=>{delete resetBtn.dataset.armed;resetBtn.textContent='Restaurar original';},3000);return;}
+  delete resetBtn.dataset.armed;resetBtn.textContent='Restaurar original';
+  for(const id of [...notes.keys()])await remove(id);
+  for(const n of originals()){notes.set(n.id,n);paint(n);await write(n);}
+  showEmpty();
+});
+
+/* ---------- início ---------- */
+function startLocal(){
+  mode='local';
+  let list=null;try{list=JSON.parse(localStorage.getItem(LKEY));}catch(e){}
+  if(!Array.isArray(list)||!list.length)list=originals();
+  list.forEach(n=>{notes.set(n.id,n);paint(n);});
+  setHint('Modo local: as mudanças ficam só neste navegador.');
+}
+startLocal();
+setHint('Arraste pelo título · clique para escrever · salva neste navegador');
+
+document.getElementById('exp').addEventListener('click',()=>{
+  const blob=new Blob([JSON.stringify([...notes.values()],null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='quadro-atos.json';a.click();
+});
+document.getElementById('imp').addEventListener('click',()=>document.getElementById('file').click());
+document.getElementById('file').addEventListener('change',async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{const list=JSON.parse(await f.text());if(!Array.isArray(list))throw 0;
+    [...notes.keys()].forEach(id=>{els.get(id)?.remove();els.delete(id);notes.delete(id);});
+    list.forEach(n=>{notes.set(n.id,n);paint(n);});saveLocal();showEmpty();setHint('Quadro carregado.');
+  }catch(err){setHint('Esse arquivo não é um quadro válido.');}
+  e.target.value='';
+});
+</script>
+</body>
+</html>
