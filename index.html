@@ -46,6 +46,14 @@ body{margin:0;background:var(--board);color:var(--ink);font-family:var(--hand);o
 .hint{position:fixed;bottom:calc(10px + env(safe-area-inset-bottom,0px));right:max(16px,env(safe-area-inset-right,0px));
   font-size:13px;color:#6d6360;background:rgba(255,255,255,.7);padding:4px 8px;border-radius:6px;z-index:999}
 @media (prefers-reduced-motion:reduce){.note.dragging{transform:none}}
+@media print{
+  @page{size:landscape;margin:10mm}
+  .bar,.hint,.del{display:none!important}
+  html,body{height:auto;overflow:visible;background:#fff}
+  #board{position:static;overflow:visible;padding:0;background:none}
+  #canvas{width:auto;height:auto}
+  .note{box-shadow:none;border:1px solid rgba(0,0,0,.2);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
 </style>
 </head>
 <body>
@@ -61,11 +69,14 @@ body{margin:0;background:var(--board);color:var(--ink);font-family:var(--hand);o
   <button id="reset">Restaurar original</button>
   <button id="exp">Baixar quadro</button>
   <button id="imp">Carregar quadro</button>
+  <button id="png">Baixar imagem</button>
+  <button id="pdf">Salvar PDF</button>
   <input type="file" id="file" accept=".json,application/json" hidden>
 </div>
 <div id="board"><div id="canvas"></div></div>
 <div class="hint" id="hint">Carregando o quadro…</div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 const ORIGINAL=[
  {t:'ATO 1',b:'TODAS\n(em círculo)\n\nSaia palha (tribal)\nAlgumas com lenço',c:'pink'},
@@ -208,6 +219,31 @@ document.getElementById('file').addEventListener('change',async e=>{
     list.forEach(n=>{notes.set(n.id,n);paint(n);});saveLocal();showEmpty();setHint('Quadro carregado.');
   }catch(err){setHint('Esse arquivo não é um quadro válido.');}
   e.target.value='';
+});
+
+function bounds(){
+  let r={x1:Infinity,y1:Infinity,x2:0,y2:0};
+  els.forEach(el=>{r.x1=Math.min(r.x1,el.offsetLeft);r.y1=Math.min(r.y1,el.offsetTop);
+    r.x2=Math.max(r.x2,el.offsetLeft+el.offsetWidth);r.y2=Math.max(r.y2,el.offsetTop+el.offsetHeight);});
+  return r;
+}
+document.getElementById('png').addEventListener('click',async()=>{
+  if(!notes.size||!window.html2canvas){setHint('Não foi possível gerar a imagem.');return;}
+  setHint('Gerando imagem…');
+  const b=bounds(),pad=24;
+  const shot=await html2canvas(canvas,{backgroundColor:'#e9e4dc',scale:2,
+    x:b.x1-pad,y:b.y1-pad,width:b.x2-b.x1+pad*2,height:b.y2-b.y1+pad*2,
+    ignoreElements:el=>el.classList&&el.classList.contains('del')});
+  const a=document.createElement('a');a.href=shot.toDataURL('image/png');a.download='quadro-atos.png';a.click();
+  setHint('Imagem baixada.');
+});
+document.getElementById('pdf').addEventListener('click',()=>{
+  document.activeElement&&document.activeElement.blur();
+  const b=bounds();
+  canvas.style.width=(b.x2+20)+'px';canvas.style.height=(b.y2+20)+'px';
+  canvas.style.zoom=Math.min(1,980/(b.x2+20),640/(b.y2+20));
+  window.print();
+  canvas.style.width='';canvas.style.height='';canvas.style.zoom='';
 });
 </script>
 </body>
